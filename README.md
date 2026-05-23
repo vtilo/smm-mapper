@@ -24,3 +24,5 @@ I made this project because working on SMM drivers directly on hardware is probl
 3. Drop your payload at `\EFI\SMM\PAYLOAD.EFI` on something UEFI can read at boot, like the EFI partition or a FAT32 USB stick
 4. Boot up your target and watch the serial output for `DXE init`, `SMM init`, and payload load messages. You’ll need a COM port reader hooked up to the serial header
 5. From Windows, use `SmmClient.exe` to reload, unload, ping, or check status
+
+Note about payloads: SmmHost handles mapping on its own, not UEFI image loader. That means you should avoid using imports entirely, since they won't get resolved. If your payload has any absolute addresses, make sure to use relocations
