@@ -42,11 +42,8 @@ typedef UINTN EFI_TPL;
 #define COMM_MAGIC 0x56444D53U
 #define COMM_VERSION 4U
 #define COMM_HEADER_SIZE 32U
-#define PAYLOAD_ABI_SIGNATURE 0x56444D53U
-#define PAYLOAD_ABI_VERSION 2U
 #define REASON_LOAD 1U
 #define REASON_UNLOAD 2U
-#define REASON_COMMAND 3U
 #define MAILBOX_MAGIC 0x58425645444D4D53ULL
 #define MAILBOX_VERSION 1U
 #define MAILBOX_HEADER_SIZE 0x1000U
@@ -207,15 +204,9 @@ struct EFI_SMM_SYSTEM_TABLE2 {
 };
 
 typedef struct {
-  UINT32 Signature;
-  UINT32 Version;
-  UINT32 Size;
-  UINT32 Flags;
   UINT32 Reason;
-  UINT32 Reserved;
   UINT32 Generation;
   UINT32 PayloadSize;
-  EFI_HANDLE HostImageHandle;
   EFI_SYSTEM_TABLE *SystemTable;
   EFI_SMM_SYSTEM_TABLE2 *Smst;
   SERIAL_PRINT SerialPrint;
@@ -225,8 +216,6 @@ typedef struct {
   ALLOCATE_POOL AllocatePool;
   FREE_POOL FreePool;
   VOID *PayloadBase;
-  VOID *Command;
-  UINTN CommandSize;
   EFI_SMM_INTERRUPT_REGISTER RawSmiHandlerRegister;
   EFI_SMM_INTERRUPT_UNREGISTER RawSmiHandlerUnRegister;
   VOID *SmmLocateProtocol;
@@ -522,16 +511,11 @@ static EFI_STATUS EFIAPI HostFreePool(VOID *Buffer) {
   return Status;
 }
 
-static VOID PreparePayloadContext(UINT32 Reason, VOID *Command,
-                                  UINTN CommandSize) {
+static VOID PreparePayloadContext(UINT32 Reason) {
   ZeroMem(&gPayloadContext, sizeof(gPayloadContext));
-  gPayloadContext.Signature = PAYLOAD_ABI_SIGNATURE;
-  gPayloadContext.Version = PAYLOAD_ABI_VERSION;
-  gPayloadContext.Size = (UINT32)sizeof(gPayloadContext);
   gPayloadContext.Reason = Reason;
   gPayloadContext.Generation = gPayloadGeneration;
   gPayloadContext.PayloadSize = (UINT32)gPayloadSize;
-  gPayloadContext.HostImageHandle = gImageHandle;
   gPayloadContext.SystemTable = gSystemTable;
   gPayloadContext.Smst = gSmst;
   gPayloadContext.SerialPrint = SerialPrint;
@@ -541,8 +525,6 @@ static VOID PreparePayloadContext(UINT32 Reason, VOID *Command,
   gPayloadContext.AllocatePool = HostAllocatePool;
   gPayloadContext.FreePool = HostFreePool;
   gPayloadContext.PayloadBase = gPayloadImage;
-  gPayloadContext.Command = Command;
-  gPayloadContext.CommandSize = CommandSize;
   if (gSmst != 0) {
     gPayloadContext.RawSmiHandlerRegister = gSmst->SmiHandlerRegister;
     gPayloadContext.RawSmiHandlerUnRegister = gSmst->SmiHandlerUnRegister;
@@ -864,7 +846,7 @@ static EFI_STATUS UnloadPayload(const char *Reason) {
     SerialPrint(Reason);
     SerialPrint("\n");
   }
-  PreparePayloadContext(REASON_UNLOAD, 0, 0);
+  PreparePayloadContext(REASON_UNLOAD);
   Status = gPayloadEntry(&gPayloadContext);
   if (EFI_ERROR(Status)) {
     SerialPrint("unload failed ");
@@ -915,7 +897,7 @@ static EFI_STATUS InstallPayloadBytes(const UINT8 *Payload, UINTN PayloadSize,
   gPayloadLoaded = 1;
   gPayloadEntry = PayloadEntry;
   gPayloadSize = PayloadSize;
-  PreparePayloadContext(REASON_LOAD, 0, 0);
+  PreparePayloadContext(REASON_LOAD);
   if (VERBOSE) {
     SerialPrint("calling payload entry ABI\n");
   }

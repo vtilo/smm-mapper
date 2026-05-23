@@ -33,10 +33,8 @@ VOID *memset(VOID *Destination, int Value, size_t Size) {
 }
 
 EFI_STATUS EFIAPI PayloadEntry(PAYLOAD_CONTEXT *Context) {
-  if (Context == 0 || Context->Signature != PAYLOAD_ABI_SIGNATURE ||
-      Context->Version != PAYLOAD_ABI_VERSION ||
-      Context->Size < sizeof(PAYLOAD_CONTEXT) ||
-      Context->SerialPrint == 0 || Context->SerialHex64 == 0) {
+  if (Context == 0 || Context->SerialPrint == 0 ||
+      Context->SerialHex64 == 0) {
     SerialPrint("sample payload entered without valid ABI context\n");
     return EFI_SUCCESS;
   }

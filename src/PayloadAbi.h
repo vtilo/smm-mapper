@@ -14,12 +14,8 @@ typedef UINT64 EFI_STATUS;
 #define EFIAPI __cdecl
 #define EFI_SUCCESS 0
 
-#define PAYLOAD_ABI_SIGNATURE 0x56444D53U
-#define PAYLOAD_ABI_VERSION 2U
-
 #define REASON_LOAD 1U
 #define REASON_UNLOAD 2U
-#define REASON_COMMAND 3U
 
 #define MAILBOX_MAGIC 0x58425645444D4D53ULL
 #define MAILBOX_VERSION 1U
@@ -69,15 +65,9 @@ typedef EFI_STATUS(EFIAPI *ALLOCATE_POOL)(UINTN Size, VOID **Buffer);
 typedef EFI_STATUS(EFIAPI *FREE_POOL)(VOID *Buffer);
 
 typedef struct {
-  UINT32 Signature;
-  UINT32 Version;
-  UINT32 Size;
-  UINT32 Flags;
   UINT32 Reason;
-  UINT32 Reserved;
   UINT32 Generation;
   UINT32 PayloadSize;
-  EFI_HANDLE HostImageHandle;
   EFI_SYSTEM_TABLE *SystemTable;
   EFI_SMM_SYSTEM_TABLE2 *Smst;
   SERIAL_PRINT SerialPrint;
@@ -87,8 +77,6 @@ typedef struct {
   ALLOCATE_POOL AllocatePool;
   FREE_POOL FreePool;
   VOID *PayloadBase;
-  VOID *Command;
-  UINTN CommandSize;
   EFI_SMM_INTERRUPT_REGISTER RawSmiHandlerRegister;
   EFI_SMM_INTERRUPT_UNREGISTER RawSmiHandlerUnRegister;
   VOID *SmmLocateProtocol;
