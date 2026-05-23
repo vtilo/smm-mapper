@@ -26,3 +26,5 @@ I made this project because working on SMM drivers directly on hardware is probl
 5. From Windows, use `SmmClient.exe` to reload, unload, ping, or check status
 
 Note about payloads: SmmHost handles mapping on its own, not UEFI image loader. That means you should avoid using imports entirely, since they won't get resolved. If your payload has any absolute addresses, make sure to use relocations
+
+If you are not sure how this project works or how to use it, just open an issue and I will help you out
