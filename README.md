@@ -5,7 +5,7 @@
 
 ## About
 
-I made this project because working on SMM drivers directly on hardware is problematic. Instead of having to reflash your SPI chip every time you want to test something, now you can just map your SMM payloads through an SMM host and swap them out from disk or even hot reload them from Windows
+I made this project because working on SMM drivers directly on hardware is problematic. Instead of having to reflash your SPI chip every time you want to test a new version of your module, now you can just map your SMM payloads through an SMM host and swap them out from disk or even hot reload them from Windows
 
 <p align="center">
   <img width="720" alt="SmmMapper overview" src="https://github.com/user-attachments/assets/0413524f-7fe0-4385-95cb-d5611c6504ad" />
