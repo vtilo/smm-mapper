@@ -29,6 +29,7 @@ typedef UINTN EFI_TPL;
 #define EFI_BUFFER_TOO_SMALL 5
 #define EFI_NOT_FOUND 14
 #define EFI_ERROR(Status) ((Status) != EFI_SUCCESS)
+#define OFFSET_OF(Type, Field) ((UINTN)&(((Type *)0)->Field))
 
 #define EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL 0x00000001U
 #define EVT_NOTIFY_SIGNAL 0x00000200U
@@ -282,7 +283,7 @@ typedef struct {
   UINT8 DebugLog[464];
 } WMI_RESPONSE;
 
-#define WMI_REQUEST_HEADER_SIZE (sizeof(WMI_REQUEST) - 1U)
+#define WMI_REQUEST_HEADER_SIZE OFFSET_OF(WMI_REQUEST, Data)
 #define WMI_RESPONSE_LOG_CAPACITY \
   (WMI_RESPONSE_SIZE - (sizeof(WMI_RESPONSE) - 464U))
 

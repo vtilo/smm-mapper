@@ -56,9 +56,7 @@ typedef struct {
 } WMI_RESPONSE;
 #pragma pack(pop)
 
-#define WMI_REQUEST_HEADER_SIZE ((uint32_t)(sizeof(WMI_REQUEST) - 1U))
-#define WMI_REQUEST_DATA_CAPACITY \
-  ((uint32_t)(WMI_REQUEST_SIZE - WMI_REQUEST_HEADER_SIZE))
+#define WMI_REQUEST_DATA_CAPACITY 4000U
 
 typedef struct {
   HMODULE Advapi;
