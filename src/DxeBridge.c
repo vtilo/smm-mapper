@@ -48,6 +48,10 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 #define MAILBOX_TOTAL_SIZE \
   (MAILBOX_HEADER_SIZE + MAILBOX_PAYLOAD_CAPACITY)
 #define SW_SMI_VALUE 0xD5U
+#define ENABLE_WMI_DOORBELL 1
+#define WMI_REQUEST_SIZE 4096U
+#define WMI_RESPONSE_OFFSET 0xD00U
+#define WMI_RESPONSE_SIZE 512U
 #define STATUS_IDLE 0U
 #define EFI_VARIABLE_NON_VOLATILE 0x00000001U
 #define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x00000002U
@@ -256,6 +260,18 @@ struct EFI_SMM_COMMUNICATION_PROTOCOL {
   EFI_SMM_COMMUNICATE Communicate;
 };
 
+typedef struct EFI_ACPI_TABLE_PROTOCOL EFI_ACPI_TABLE_PROTOCOL;
+typedef EFI_STATUS(EFIAPI *EFI_INSTALL_ACPI_TABLE)(
+    const EFI_ACPI_TABLE_PROTOCOL *This, VOID *AcpiTableBuffer,
+    UINTN AcpiTableBufferSize, UINTN *TableKey);
+typedef EFI_STATUS(EFIAPI *EFI_UNINSTALL_ACPI_TABLE)(
+    const EFI_ACPI_TABLE_PROTOCOL *This, UINTN TableKey);
+
+struct EFI_ACPI_TABLE_PROTOCOL {
+  EFI_INSTALL_ACPI_TABLE InstallAcpiTable;
+  EFI_UNINSTALL_ACPI_TABLE UninstallAcpiTable;
+};
+
 #pragma pack(push, 1)
 typedef struct {
   EFI_GUID HeaderGuid;
@@ -307,6 +323,40 @@ typedef struct {
   UINT32 PayloadCapacity;
 } MAILBOX_INFO;
 
+typedef struct {
+  UINT32 Signature;
+  UINT32 Length;
+  UINT8 Revision;
+  UINT8 Checksum;
+  UINT8 OemId[6];
+  UINT8 OemTableId[8];
+  UINT32 OemRevision;
+  UINT32 CreatorId;
+  UINT32 CreatorRevision;
+} ACPI_HEADER;
+
+typedef struct {
+  UINT64 Signature;
+  UINT8 Checksum;
+  UINT8 OemId[6];
+  UINT8 Revision;
+  UINT32 RsdtAddress;
+  UINT32 Length;
+  UINT64 XsdtAddress;
+  UINT8 ExtendedChecksum;
+  UINT8 Reserved[3];
+} ACPI_RSDP;
+
+typedef struct {
+  ACPI_HEADER Header;
+  UINT32 FirmwareCtrl;
+  UINT32 Dsdt;
+  UINT8 Reserved;
+  UINT8 PreferredPmProfile;
+  UINT16 SciInt;
+  UINT32 SmiCmd;
+} ACPI_FADT_PREFIX;
+
 static EFI_GUID gEfiSimpleFileSystemProtocolGuid = {
     0x0964e5b22,
     0x6459,
@@ -332,6 +382,26 @@ static EFI_GUID gEdkiiPiSmmCommunicationRegionTableGuid = {
     0xd582,
     0x44ac,
     {0xa1, 0x1f, 0xe3, 0xd5, 0x65, 0x26, 0xdb, 0x34}};
+static EFI_GUID gEfiAcpiTableProtocolGuid = {
+    0xffe06bdd,
+    0x6107,
+    0x46a6,
+    {0x7b, 0xb2, 0x5a, 0x9c, 0x7e, 0xc5, 0x27, 0x5c}};
+static EFI_GUID gEfiAcpi20TableGuid = {
+    0x8868e871,
+    0xe4f1,
+    0x11d3,
+    {0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}};
+static EFI_GUID gEfiAcpi10TableGuid = {
+    0xeb9d2d30,
+    0x2d88,
+    0x11d3,
+    {0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d}};
+static EFI_GUID gDoorbellWmiGuid = {
+    0x9b6f1a20,
+    0x31d5,
+    0x44df,
+    {0x9a, 0x9c, 0x15, 0x7f, 0x43, 0x07, 0x91, 0x4b}};
 
 static EFI_SYSTEM_TABLE *gSystemTable;
 static EFI_EVENT gSimpleFsEvent;
@@ -343,6 +413,9 @@ static UINTN gSent;
 static UINTN gRetryCount;
 static EFI_PHYSICAL_ADDRESS gMailboxPhysical;
 static UINT32 gMailboxSize;
+static UINTN gDoorbellInstalled;
+static UINTN gDoorbellTableKey;
+static UINT8 gDoorbellSsdt[512];
 static UINT8 gPayloadFile[PAYLOAD_FILE_LIMIT];
 static UINT8 gCommBuffer[24 + COMM_HEADER_SIZE + PAYLOAD_FILE_LIMIT];
 
@@ -403,6 +476,321 @@ static UINT64 Hash64(const VOID *Buffer, UINTN Size) {
     Hash *= 0x100000001B3ULL;
   }
   return Hash;
+}
+
+static UINT32 Signature32(char A, char B, char C, char D) {
+  return (UINT32)(UINT8)A | ((UINT32)(UINT8)B << 8) |
+         ((UINT32)(UINT8)C << 16) | ((UINT32)(UINT8)D << 24);
+}
+
+static UINT8 AcpiChecksum(const UINT8 *Buffer, UINTN Size) {
+  UINT8 Sum = 0;
+  while (Size--) {
+    Sum = (UINT8)(Sum + *Buffer++);
+  }
+  return (UINT8)(0U - Sum);
+}
+
+static UINT8 *EmitBytes(UINT8 *Out, const VOID *Data, UINTN Size) {
+  CopyMemLocal(Out, Data, Size);
+  return Out + Size;
+}
+
+static UINT8 *EmitName(UINT8 *Out, const char *Name) {
+  return EmitBytes(Out, Name, 4);
+}
+
+static UINT8 *ReservePkgLen(UINT8 *Out) {
+  Out[0] = 0;
+  Out[1] = 0;
+  return Out + 2;
+}
+
+static VOID PatchPkgLen(UINT8 *PkgLen, UINTN Length) {
+  PkgLen[0] = (UINT8)(0x40U | (Length & 0x0FU));
+  PkgLen[1] = (UINT8)((Length >> 4) & 0xFFU);
+}
+
+static UINT8 *EmitString(UINT8 *Out, const char *Text) {
+  *Out++ = 0x0D;
+  while (*Text) {
+    *Out++ = (UINT8)*Text++;
+  }
+  *Out++ = 0;
+  return Out;
+}
+
+static UINT8 *EmitDwordConst(UINT8 *Out, UINT32 Value) {
+  *Out++ = 0x0C;
+  *Out++ = (UINT8)Value;
+  *Out++ = (UINT8)(Value >> 8);
+  *Out++ = (UINT8)(Value >> 16);
+  *Out++ = (UINT8)(Value >> 24);
+  return Out;
+}
+
+static UINT8 *EmitPkgLength(UINT8 *Out, UINTN Length) {
+  if (Length < 0x40U) {
+    *Out++ = (UINT8)Length;
+  } else if (Length < 0x1000U) {
+    *Out++ = (UINT8)(0x40U | (Length & 0x0FU));
+    *Out++ = (UINT8)((Length >> 4) & 0xFFU);
+  } else if (Length < 0x100000U) {
+    *Out++ = (UINT8)(0x80U | (Length & 0x0FU));
+    *Out++ = (UINT8)((Length >> 4) & 0xFFU);
+    *Out++ = (UINT8)((Length >> 12) & 0xFFU);
+  } else {
+    *Out++ = (UINT8)(0xC0U | (Length & 0x0FU));
+    *Out++ = (UINT8)((Length >> 4) & 0xFFU);
+    *Out++ = (UINT8)((Length >> 12) & 0xFFU);
+    *Out++ = (UINT8)((Length >> 20) & 0xFFU);
+  }
+  return Out;
+}
+
+static ACPI_HEADER *FindAcpiTable(UINT32 Signature) {
+  ACPI_RSDP *Rsdp = 0;
+  ACPI_HEADER *Xsdt;
+  ACPI_HEADER *Rsdt;
+
+  if (gSystemTable == 0 || gSystemTable->ConfigurationTable == 0) {
+    return 0;
+  }
+  for (UINTN Index = 0; Index < gSystemTable->NumberOfTableEntries; Index++) {
+    EFI_CONFIGURATION_TABLE *Entry = &gSystemTable->ConfigurationTable[Index];
+    if (CompareGuid(&Entry->VendorGuid, &gEfiAcpi20TableGuid) ||
+        CompareGuid(&Entry->VendorGuid, &gEfiAcpi10TableGuid)) {
+      Rsdp = (ACPI_RSDP *)Entry->VendorTable;
+      if (CompareGuid(&Entry->VendorGuid, &gEfiAcpi20TableGuid)) {
+        break;
+      }
+    }
+  }
+  if (Rsdp == 0) {
+    return 0;
+  }
+  if (Rsdp->Revision >= 2 && Rsdp->XsdtAddress != 0) {
+    Xsdt = (ACPI_HEADER *)(UINTN)Rsdp->XsdtAddress;
+    if (Xsdt->Signature == Signature32('X', 'S', 'D', 'T') &&
+        Xsdt->Length >= sizeof(ACPI_HEADER)) {
+      UINTN Count = (Xsdt->Length - sizeof(ACPI_HEADER)) / sizeof(UINT64);
+      UINT64 *Entries = (UINT64 *)((UINT8 *)Xsdt + sizeof(ACPI_HEADER));
+      for (UINTN Index = 0; Index < Count; Index++) {
+        ACPI_HEADER *Table = (ACPI_HEADER *)(UINTN)Entries[Index];
+        if (Table != 0 && Table->Signature == Signature) {
+          return Table;
+        }
+      }
+    }
+  }
+  if (Rsdp->RsdtAddress != 0) {
+    Rsdt = (ACPI_HEADER *)(UINTN)Rsdp->RsdtAddress;
+    if (Rsdt->Signature == Signature32('R', 'S', 'D', 'T') &&
+        Rsdt->Length >= sizeof(ACPI_HEADER)) {
+      UINTN Count = (Rsdt->Length - sizeof(ACPI_HEADER)) / sizeof(UINT32);
+      UINT32 *Entries = (UINT32 *)((UINT8 *)Rsdt + sizeof(ACPI_HEADER));
+      for (UINTN Index = 0; Index < Count; Index++) {
+        ACPI_HEADER *Table = (ACPI_HEADER *)(UINTN)(UINT64)Entries[Index];
+        if (Table != 0 && Table->Signature == Signature) {
+          return Table;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+static UINT32 FindSmiCommandPort(VOID) {
+  ACPI_FADT_PREFIX *Fadt =
+      (ACPI_FADT_PREFIX *)FindAcpiTable(Signature32('F', 'A', 'C', 'P'));
+  if (Fadt != 0 && Fadt->Header.Length >= sizeof(ACPI_FADT_PREFIX) &&
+      Fadt->SmiCmd != 0) {
+    return Fadt->SmiCmd;
+  }
+  return 0xB2U;
+}
+
+static UINTN BuildDoorbellSsdt(UINT8 *Buffer, UINTN Capacity,
+                               UINT32 SmiCommandPort,
+                               EFI_PHYSICAL_ADDRESS MailboxPhysical) {
+  ACPI_HEADER *Header = (ACPI_HEADER *)Buffer;
+  UINT8 *Out = Buffer + sizeof(ACPI_HEADER);
+  UINT8 *ScopePkg;
+  UINT8 *DevicePkg;
+  UINT8 *ReqFieldPkg;
+  UINT8 *OutFieldPkg;
+  UINT8 *MethodPkg;
+  UINT8 Wdg[20];
+
+  if (Capacity < sizeof(gDoorbellSsdt)) {
+    return 0;
+  }
+  ZeroMem(Buffer, Capacity);
+  Header->Signature = Signature32('S', 'S', 'D', 'T');
+  Header->Revision = 2;
+  CopyMemLocal(Header->OemId, "SMMLDR", 6);
+  CopyMemLocal(Header->OemTableId, "DOORBELL", 8);
+  Header->OemRevision = 1;
+  Header->CreatorId = Signature32('S', 'M', 'A', 'P');
+  Header->CreatorRevision = 1;
+
+  *Out++ = 0x10;
+  ScopePkg = Out;
+  Out = ReservePkgLen(Out);
+  *Out++ = 0x5C;
+  Out = EmitName(Out, "_SB_");
+
+  *Out++ = 0x5B;
+  *Out++ = 0x82;
+  DevicePkg = Out;
+  Out = ReservePkgLen(Out);
+  Out = EmitName(Out, "SMMW");
+
+  *Out++ = 0x08;
+  Out = EmitName(Out, "_HID");
+  Out = EmitString(Out, "PNP0C14");
+
+  *Out++ = 0x08;
+  Out = EmitName(Out, "_UID");
+  Out = EmitString(Out, "SmmMapper");
+
+  ZeroMem(Wdg, sizeof(Wdg));
+  CopyMemLocal(Wdg, &gDoorbellWmiGuid, sizeof(gDoorbellWmiGuid));
+  Wdg[16] = 'B';
+  Wdg[17] = 'D';
+  Wdg[18] = 1;
+  Wdg[19] = 0x02;
+
+  *Out++ = 0x08;
+  Out = EmitName(Out, "_WDG");
+  *Out++ = 0x11;
+  *Out++ = 0x17;
+  *Out++ = 0x0A;
+  *Out++ = (UINT8)sizeof(Wdg);
+  Out = EmitBytes(Out, Wdg, sizeof(Wdg));
+
+  *Out++ = 0x5B;
+  *Out++ = 0x80;
+  Out = EmitName(Out, "SMIR");
+  *Out++ = 0x01;
+  Out = EmitDwordConst(Out, SmiCommandPort);
+  *Out++ = 0x0A;
+  *Out++ = 0x01;
+
+  *Out++ = 0x5B;
+  *Out++ = 0x81;
+  *Out++ = 0x0B;
+  Out = EmitName(Out, "SMIR");
+  *Out++ = 0x01;
+  Out = EmitName(Out, "SMIC");
+  *Out++ = 0x08;
+
+  *Out++ = 0x5B;
+  *Out++ = 0x80;
+  Out = EmitName(Out, "MREQ");
+  *Out++ = 0x00;
+  Out = EmitDwordConst(Out, (UINT32)(MailboxPhysical + MAILBOX_HEADER_SIZE));
+  Out = EmitDwordConst(Out, WMI_REQUEST_SIZE);
+
+  *Out++ = 0x5B;
+  *Out++ = 0x81;
+  ReqFieldPkg = Out;
+  Out = ReservePkgLen(Out);
+  Out = EmitName(Out, "MREQ");
+  *Out++ = 0x01;
+  Out = EmitName(Out, "WMRQ");
+  Out = EmitPkgLength(Out, WMI_REQUEST_SIZE * 8U);
+  PatchPkgLen(ReqFieldPkg, (UINTN)(Out - ReqFieldPkg));
+
+  *Out++ = 0x5B;
+  *Out++ = 0x80;
+  Out = EmitName(Out, "MOUT");
+  *Out++ = 0x00;
+  Out = EmitDwordConst(Out, (UINT32)(MailboxPhysical + WMI_RESPONSE_OFFSET));
+  Out = EmitDwordConst(Out, WMI_RESPONSE_SIZE);
+
+  *Out++ = 0x5B;
+  *Out++ = 0x81;
+  OutFieldPkg = Out;
+  Out = ReservePkgLen(Out);
+  Out = EmitName(Out, "MOUT");
+  *Out++ = 0x01;
+  Out = EmitName(Out, "WOUT");
+  Out = EmitPkgLength(Out, WMI_RESPONSE_SIZE * 8U);
+  PatchPkgLen(OutFieldPkg, (UINTN)(Out - OutFieldPkg));
+
+  *Out++ = 0x14;
+  MethodPkg = Out;
+  Out = ReservePkgLen(Out);
+  Out = EmitName(Out, "WMBD");
+  *Out++ = 0x03;
+  *Out++ = 0x70;
+  *Out++ = 0x6A;
+  Out = EmitName(Out, "WMRQ");
+  *Out++ = 0x70;
+  *Out++ = 0x0A;
+  *Out++ = (UINT8)SW_SMI_VALUE;
+  Out = EmitName(Out, "SMIC");
+  *Out++ = 0xA4;
+  Out = EmitName(Out, "WOUT");
+
+  PatchPkgLen(MethodPkg, (UINTN)(Out - MethodPkg));
+  PatchPkgLen(DevicePkg, (UINTN)(Out - DevicePkg));
+  PatchPkgLen(ScopePkg, (UINTN)(Out - ScopePkg));
+  Header->Length = (UINT32)(Out - Buffer);
+  Header->Checksum = 0;
+  Header->Checksum = AcpiChecksum(Buffer, Header->Length);
+  return Header->Length;
+}
+
+static EFI_STATUS InstallWmiDoorbell(VOID) {
+  EFI_ACPI_TABLE_PROTOCOL *AcpiTable = 0;
+  EFI_STATUS Status;
+  UINT32 SmiPort;
+  UINTN TableSize;
+
+  if (!ENABLE_WMI_DOORBELL || gDoorbellInstalled != 0) {
+    return EFI_SUCCESS;
+  }
+  if (gSystemTable == 0 || gSystemTable->BootServices == 0 ||
+      gSystemTable->BootServices->LocateProtocol == 0) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Status = gSystemTable->BootServices->LocateProtocol(
+      &gEfiAcpiTableProtocolGuid, 0, (VOID **)&AcpiTable);
+  if (EFI_ERROR(Status) || AcpiTable == 0 || AcpiTable->InstallAcpiTable == 0) {
+    if (VERBOSE) {
+      SerialPrint("ACPI table protocol unavailable ");
+      SerialHex64(Status);
+      SerialPrint("\n");
+    }
+    return Status;
+  }
+
+  SmiPort = FindSmiCommandPort();
+  TableSize = BuildDoorbellSsdt(gDoorbellSsdt, sizeof(gDoorbellSsdt),
+                                SmiPort, gMailboxPhysical);
+  if (TableSize == 0) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+  Status = AcpiTable->InstallAcpiTable(AcpiTable, gDoorbellSsdt, TableSize,
+                                       &gDoorbellTableKey);
+  if (EFI_ERROR(Status)) {
+    SerialPrint("WMI doorbell install failed ");
+    SerialHex64(Status);
+    SerialPrint("\n");
+  } else {
+    gDoorbellInstalled = 1;
+  }
+  if (!EFI_ERROR(Status) && VERBOSE) {
+    SerialPrint("WMI doorbell installed smi=0x");
+    SerialHex64(SmiPort);
+    SerialPrint(" sw=0x");
+    SerialHex64(SW_SMI_VALUE);
+    SerialPrint("\n");
+  }
+  return Status;
 }
 
 VOID *memset(VOID *Destination, int Value, size_t Size) {
@@ -897,6 +1285,7 @@ EFI_STATUS EFIAPI DxeBridgeEntry(EFI_HANDLE ImageHandle,
   }
 
   EnsureMailbox();
+  InstallWmiDoorbell();
   if (EFI_ERROR(TrySendPayload("entry"))) {
     RegisterRetryTimer();
     RegisterNotify(&gEfiSimpleFileSystemProtocolGuid, &gSimpleFsEvent,

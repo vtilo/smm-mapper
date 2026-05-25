@@ -46,6 +46,7 @@ typedef UINTN EFI_TPL;
 #define COMM_HEADER_SIZE 32U
 #define REASON_LOAD 1U
 #define REASON_UNLOAD 2U
+#define REASON_DOORBELL 3U
 #define MAILBOX_MAGIC 0x58425645444D4D53ULL
 #define MAILBOX_HEADER_SIZE 0x1000U
 #define MAILBOX_PAYLOAD_CAPACITY (256U * 1024U)
@@ -53,6 +54,17 @@ typedef UINTN EFI_TPL;
 #define MAILBOX_TOTAL_SIZE \
   (MAILBOX_HEADER_SIZE + MAILBOX_PAYLOAD_CAPACITY)
 #define SW_SMI_VALUE 0xD5U
+#define WMI_REQUEST_MAGIC 0x00514552574D4D53ULL
+#define WMI_RESPONSE_MAGIC 0x00534552574D4D53ULL
+#define WMI_REQUEST_SIZE 4096U
+#define WMI_RESPONSE_OFFSET 0xD00U
+#define WMI_RESPONSE_SIZE 512U
+#define WMI_COMMAND_DOORBELL 1U
+#define WMI_COMMAND_PING 2U
+#define WMI_COMMAND_STATUS 3U
+#define WMI_COMMAND_UNLOAD 4U
+#define WMI_COMMAND_STAGE_CHUNK 5U
+#define WMI_COMMAND_RELOAD 6U
 #define COMMAND_NONE 0U
 #define COMMAND_PING 1U
 #define COMMAND_STATUS 2U
@@ -246,6 +258,34 @@ typedef struct {
   UINT8 Reserved[128];
 } MAILBOX;
 
+typedef struct {
+  UINT64 Magic;
+  UINT32 Command;
+  UINT32 DataSize;
+  UINT64 Offset;
+  UINT64 PayloadSize;
+  UINT64 PayloadHash;
+  UINT64 Sequence;
+  UINT8 Data[1];
+} WMI_REQUEST;
+
+typedef struct {
+  UINT64 Magic;
+  UINT32 Size;
+  UINT32 Status;
+  UINT32 Loaded;
+  UINT32 Generation;
+  UINT32 LastCommand;
+  UINT32 DebugLogSize;
+  UINT64 Result;
+  UINT64 Sequence;
+  UINT8 DebugLog[464];
+} WMI_RESPONSE;
+
+#define WMI_REQUEST_HEADER_SIZE (sizeof(WMI_REQUEST) - 1U)
+#define WMI_RESPONSE_LOG_CAPACITY \
+  (WMI_RESPONSE_SIZE - (sizeof(WMI_RESPONSE) - 464U))
+
 struct EFI_BOOT_SERVICES {
   EFI_TABLE_HEADER Hdr;
   VOID *RaiseTPL;
@@ -382,6 +422,7 @@ static UINT32 gControlSwSmiValue = SW_SMI_VALUE;
 static PAYLOAD_CONTEXT gPayloadContext;
 static EFI_HANDLE gTrackedHandlers[MAX_TRACKED_HANDLERS];
 static VOID *gTrackedPools[MAX_TRACKED_POOLS];
+static UINT64 gWmiSequence;
 
 static VOID IoWait(VOID) { __outbyte(0x80, 0); }
 
@@ -919,8 +960,10 @@ static EFI_STATUS InstallPayloadBytes(const UINT8 *Payload, UINTN PayloadSize,
     SerialPrint("\n");
   }
 
-  ZeroMem(gPayloadFile, PAYLOAD_FILE_LIMIT);
-  CopyMemLocal(gPayloadFile, Payload, PayloadSize);
+  if (Payload != gPayloadFile) {
+    ZeroMem(gPayloadFile, PAYLOAD_FILE_LIMIT);
+    CopyMemLocal(gPayloadFile, Payload, PayloadSize);
+  }
   Status = LoadPe32Plus(gPayloadFile, PayloadSize, &PayloadEntry);
   if (EFI_ERROR(Status) || PayloadEntry == 0) {
     SerialPrint("payload mapper failed ");
@@ -1062,9 +1105,115 @@ static EFI_STATUS ReloadPayloadFromMailbox(VOID) {
   return InstallPayloadBytes(Payload, PayloadSize, "hot reload");
 }
 
+static EFI_STATUS DispatchDoorbellToPayload(VOID) {
+  EFI_STATUS Status;
+  if (gPayloadLoaded == 0 || gPayloadEntry == 0) {
+    return EFI_SUCCESS;
+  }
+  MailboxLogReset();
+  PreparePayloadContext(REASON_DOORBELL);
+  Status = gPayloadEntry(&gPayloadContext);
+  if (EFI_ERROR(Status) && VERBOSE) {
+    SerialPrint("doorbell failed ");
+    SerialHex64(Status);
+    SerialPrint("\n");
+  }
+  return Status;
+}
+
+static VOID WriteWmiResponse(UINT32 Command, EFI_STATUS Status) {
+  WMI_RESPONSE *Response;
+  UINT32 LogSize;
+
+  if (gMailbox == 0 || gMailbox->Magic != MAILBOX_MAGIC) {
+    return;
+  }
+  Response = (WMI_RESPONSE *)((UINT8 *)gMailbox + WMI_RESPONSE_OFFSET);
+  ZeroMem(Response, WMI_RESPONSE_SIZE);
+  Response->Magic = WMI_RESPONSE_MAGIC;
+  Response->Size = WMI_RESPONSE_SIZE;
+  Response->Status = (UINT32)Status;
+  Response->Loaded = (UINT32)gPayloadLoaded;
+  Response->Generation = gPayloadGeneration;
+  Response->LastCommand = Command;
+  Response->Result = Status;
+  Response->Sequence = ++gWmiSequence;
+  if (gMailbox->DebugLogCapacity != 0 &&
+      gMailbox->DebugLogSize <= gMailbox->DebugLogCapacity) {
+    LogSize = gMailbox->DebugLogSize;
+    if (LogSize > WMI_RESPONSE_LOG_CAPACITY) {
+      LogSize = WMI_RESPONSE_LOG_CAPACITY;
+    }
+    Response->DebugLogSize = LogSize;
+    if (LogSize != 0) {
+      CopyMemLocal(Response->DebugLog, gMailbox->DebugLog, LogSize);
+    }
+  }
+}
+
+static EFI_STATUS ProcessWmiRequest(VOID) {
+  WMI_REQUEST *Request;
+  UINT32 Command;
+  UINTN DataSize;
+  UINTN PayloadSize;
+  UINT64 ActualHash;
+  EFI_STATUS Status = EFI_SUCCESS;
+
+  if (gMailbox == 0 || gMailbox->Magic != MAILBOX_MAGIC) {
+    return EFI_NOT_FOUND;
+  }
+  Request = (WMI_REQUEST *)((UINT8 *)gMailbox + MAILBOX_HEADER_SIZE);
+  if (Request->Magic != WMI_REQUEST_MAGIC) {
+    return DispatchDoorbellToPayload();
+  }
+
+  Command = Request->Command;
+  DataSize = (UINTN)Request->DataSize;
+  MailboxLogReset();
+
+  if (Command == WMI_COMMAND_DOORBELL) {
+    Status = DispatchDoorbellToPayload();
+  } else if (Command == WMI_COMMAND_PING || Command == WMI_COMMAND_STATUS) {
+    Status = EFI_SUCCESS;
+  } else if (Command == WMI_COMMAND_UNLOAD) {
+    Status = UnloadPayload("WMI unload");
+  } else if (Command == WMI_COMMAND_STAGE_CHUNK) {
+    if (DataSize > WMI_REQUEST_SIZE - WMI_REQUEST_HEADER_SIZE ||
+        Request->Offset + DataSize > PAYLOAD_FILE_LIMIT) {
+      Status = EFI_INVALID_PARAMETER;
+    } else {
+      CopyMemLocal(gPayloadFile + Request->Offset, Request->Data, DataSize);
+      Status = EFI_SUCCESS;
+    }
+  } else if (Command == WMI_COMMAND_RELOAD) {
+    PayloadSize = (UINTN)Request->PayloadSize;
+    if (PayloadSize == 0 || PayloadSize >= PAYLOAD_FILE_LIMIT) {
+      Status = EFI_INVALID_PARAMETER;
+    } else {
+      ActualHash = Hash64(gPayloadFile, PayloadSize);
+      if (Request->PayloadHash != 0 && Request->PayloadHash != ActualHash) {
+        SerialPrint("WMI reload hash mismatch\n");
+        Status = EFI_INVALID_PARAMETER;
+      } else {
+        Status = UnloadPayload("WMI reload");
+        if (!EFI_ERROR(Status)) {
+          Status = InstallPayloadBytes(gPayloadFile, PayloadSize,
+                                       "WMI reload");
+        }
+      }
+    }
+  } else {
+    Status = EFI_UNSUPPORTED;
+  }
+
+  Request->Magic = 0;
+  WriteWmiResponse(Command, Status);
+  return Status;
+}
+
 static EFI_STATUS EFIAPI ControlSwSmiHandler(EFI_HANDLE DispatchHandle,
-                                                   const VOID *Context,
-                                                   VOID *CommBuffer,
+                                                    const VOID *Context,
+                                                    VOID *CommBuffer,
                                                    UINTN *CommBufferSize) {
   UINT32 Command;
   EFI_STATUS Status = EFI_SUCCESS;
@@ -1086,7 +1235,7 @@ static EFI_STATUS EFIAPI ControlSwSmiHandler(EFI_HANDLE DispatchHandle,
 
   Command = gMailbox->Command;
   if (Command == COMMAND_NONE) {
-    return EFI_SUCCESS;
+    return ProcessWmiRequest();
   }
 
   MailboxLogReset();
