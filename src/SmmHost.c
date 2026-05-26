@@ -40,7 +40,6 @@ typedef UINTN EFI_TPL;
 #define PAYLOAD_FILE_LIMIT (256U * 1024U)
 #define PAYLOAD_IMAGE_LIMIT (768U * 1024U)
 #define COMM_MAGIC 0x56444D53U
-#define COMM_VERSION 4U
 #define COMM_LOAD_INLINE 1U
 #define COMM_LOAD_MAILBOX 2U
 #define COMM_HEADER_SIZE 32U
@@ -65,15 +64,6 @@ typedef UINTN EFI_TPL;
 #define WMI_COMMAND_UNLOAD 4U
 #define WMI_COMMAND_STAGE_CHUNK 5U
 #define WMI_COMMAND_RELOAD 6U
-#define COMMAND_NONE 0U
-#define COMMAND_PING 1U
-#define COMMAND_STATUS 2U
-#define COMMAND_UNLOAD 3U
-#define COMMAND_RELOAD 4U
-#define STATUS_IDLE 0U
-#define STATUS_BUSY 1U
-#define STATUS_OK 2U
-#define STATUS_ERROR 0x80000000U
 #define MAX_TRACKED_HANDLERS 16U
 #define MAX_TRACKED_POOLS 16U
 #define EfiRuntimeServicesData 6U
@@ -87,7 +77,6 @@ typedef struct {
 
 typedef struct {
   UINT32 Magic;
-  UINT32 Version;
   UINT32 Command;
   UINT32 PayloadSize;
   UINT64 MailboxPhysical;
@@ -239,23 +228,13 @@ typedef struct {
   UINT64 Magic;
   UINT32 HeaderSize;
   UINT32 TotalSize;
-  UINT32 Command;
-  UINT32 Status;
-  UINT32 SwSmiValue;
   UINT32 PayloadCapacity;
   UINT32 PayloadSize;
-  UINT32 Loaded;
-  UINT32 Generation;
-  UINT32 LastCommand;
-  UINT64 Sequence;
-  UINT64 Result;
   UINT64 PayloadHash;
   UINT64 PayloadOffset;
-  UINT64 PayloadBase;
   UINT32 DebugLogSize;
   UINT32 DebugLogCapacity;
   UINT8 DebugLog[MAILBOX_LOG_CAPACITY];
-  UINT8 Reserved[128];
 } MAILBOX;
 
 typedef struct {
@@ -863,19 +842,6 @@ static EFI_STATUS LoadPe32Plus(UINT8 *File, UINTN FileSize,
   return EFI_SUCCESS;
 }
 
-static VOID UpdateMailboxState(VOID) {
-  if (gMailbox == 0) {
-    return;
-  }
-  gMailbox->Loaded = (UINT32)gPayloadLoaded;
-  gMailbox->Generation = gPayloadGeneration;
-  gMailbox->PayloadBase = (UINT64)(UINTN)gPayloadImage;
-  if (gMailbox->Command == COMMAND_NONE &&
-      gMailbox->Status == STATUS_BUSY) {
-    gMailbox->Status = STATUS_IDLE;
-  }
-}
-
 static VOID CleanupTrackedResources(VOID) {
   if (gSmst != 0 && gSmst->SmiHandlerUnRegister != 0) {
     for (UINTN Index = 0; Index < MAX_TRACKED_HANDLERS; Index++) {
@@ -903,7 +869,6 @@ static EFI_STATUS UnloadPayload(const char *Reason) {
     gPayloadLoaded = 0;
     gPayloadEntry = 0;
     gPayloadSize = 0;
-    UpdateMailboxState();
     return EFI_SUCCESS;
   }
 
@@ -926,7 +891,6 @@ static EFI_STATUS UnloadPayload(const char *Reason) {
   gPayloadSize = 0;
   ZeroMem(gPayloadImage, PAYLOAD_IMAGE_LIMIT);
   gPayloadGeneration++;
-  UpdateMailboxState();
   return Status;
 }
 
@@ -980,7 +944,6 @@ static EFI_STATUS InstallPayloadBytes(const UINT8 *Payload, UINTN PayloadSize,
     SerialHex64(gPayloadGeneration);
     SerialPrint("\n");
   }
-  UpdateMailboxState();
   return Status;
 }
 
@@ -1035,14 +998,11 @@ static VOID ConfigureMailbox(UINT64 MailboxPhysical, UINT32 MailboxSize,
     gMailbox->Magic = MAILBOX_MAGIC;
     gMailbox->HeaderSize = MAILBOX_HEADER_SIZE;
     gMailbox->TotalSize = MailboxSize;
-    gMailbox->SwSmiValue = gControlSwSmiValue;
     gMailbox->PayloadCapacity = MAILBOX_PAYLOAD_CAPACITY;
     gMailbox->PayloadOffset = MAILBOX_HEADER_SIZE;
     gMailbox->DebugLogCapacity = MAILBOX_LOG_CAPACITY;
     gMailbox->DebugLogSize = 0;
-    gMailbox->Status = STATUS_IDLE;
   }
-  UpdateMailboxState();
   SerialPrint("mailbox configured base=0x");
   SerialHex64(MailboxPhysical);
   SerialPrint(" size=0x");
@@ -1195,8 +1155,6 @@ static EFI_STATUS EFIAPI ControlSwSmiHandler(EFI_HANDLE DispatchHandle,
                                                     const VOID *Context,
                                                     VOID *CommBuffer,
                                                    UINTN *CommBufferSize) {
-  UINT32 Command;
-  EFI_STATUS Status = EFI_SUCCESS;
   (void)DispatchHandle;
   (void)Context;
   (void)CommBuffer;
@@ -1210,58 +1168,7 @@ static EFI_STATUS EFIAPI ControlSwSmiHandler(EFI_HANDLE DispatchHandle,
       gMailbox->TotalSize < MAILBOX_TOTAL_SIZE) {
     return EFI_NOT_FOUND;
   }
-
-  Command = gMailbox->Command;
-  if (Command == COMMAND_NONE) {
-    return ProcessWmiRequest();
-  }
-
-  MailboxLogReset();
-  gMailbox->Status = STATUS_BUSY;
-  gMailbox->Result = EFI_SUCCESS;
-  gMailbox->LastCommand = Command;
-  if (Command == COMMAND_RELOAD) {
-    SerialPrint("reload begin seq=0x");
-    SerialHex64(gMailbox->Sequence);
-    SerialPrint("\n");
-  } else {
-    SerialPrint("control command ");
-    SerialHex64(Command);
-    SerialPrint("\n");
-  }
-
-  if (Command == COMMAND_PING || Command == COMMAND_STATUS) {
-    Status = EFI_SUCCESS;
-  } else if (Command == COMMAND_UNLOAD) {
-    Status = UnloadPayload("hot unload");
-  } else if (Command == COMMAND_RELOAD) {
-    Status = ReloadPayloadFromMailbox();
-  } else {
-    Status = EFI_UNSUPPORTED;
-  }
-
-  gMailbox->Command = COMMAND_NONE;
-  gMailbox->Result = Status;
-  gMailbox->Loaded = (UINT32)gPayloadLoaded;
-  gMailbox->Generation = gPayloadGeneration;
-  gMailbox->PayloadBase = (UINT64)(UINTN)gPayloadImage;
-  gMailbox->Status = EFI_ERROR(Status) ? STATUS_ERROR : STATUS_OK;
-  if (Command == COMMAND_RELOAD) {
-    if (EFI_ERROR(Status)) {
-      SerialPrint("reload failed ");
-      SerialHex64(Status);
-      SerialPrint("\n");
-    } else {
-      SerialPrint("reload ok gen=0x");
-      SerialHex64(gPayloadGeneration);
-      SerialPrint("\n");
-    }
-  } else {
-    SerialPrint("control command result ");
-    SerialHex64(Status);
-    SerialPrint("\n");
-  }
-  return Status;
+  return ProcessWmiRequest();
 }
 
 static EFI_STATUS EFIAPI CommunicationHandler(EFI_HANDLE DispatchHandle,
@@ -1284,9 +1191,8 @@ static EFI_STATUS EFIAPI CommunicationHandler(EFI_HANDLE DispatchHandle,
     SerialPrint("comm buffer too small\n");
     return EFI_INVALID_PARAMETER;
   }
-  if (Message->Magic != COMM_MAGIC ||
-      Message->Version != COMM_VERSION) {
-    SerialPrint("comm magic/version rejected\n");
+  if (Message->Magic != COMM_MAGIC) {
+    SerialPrint("comm magic rejected\n");
     return EFI_INVALID_PARAMETER;
   }
   ConfigureMailbox(Message->MailboxPhysical, Message->MailboxSize,

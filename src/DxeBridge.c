@@ -36,7 +36,6 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 #define COM1_PORT 0x3F8
 #define PAYLOAD_FILE_LIMIT (256U * 1024U)
 #define COMM_MAGIC 0x56444D53U
-#define COMM_VERSION 4U
 #define COMM_LOAD_INLINE 1U
 #define COMM_LOAD_MAILBOX 2U
 #define COMM_HEADER_SIZE 32U
@@ -47,14 +46,9 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 #define MAILBOX_TOTAL_SIZE \
   (MAILBOX_HEADER_SIZE + MAILBOX_PAYLOAD_CAPACITY)
 #define SW_SMI_VALUE 0xD5U
-#define ENABLE_WMI_DOORBELL 1
 #define WMI_REQUEST_SIZE 4096U
 #define WMI_RESPONSE_OFFSET 0xD00U
 #define WMI_RESPONSE_SIZE 512U
-#define STATUS_IDLE 0U
-#define EFI_VARIABLE_NON_VOLATILE 0x00000001U
-#define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x00000002U
-#define EFI_VARIABLE_RUNTIME_ACCESS 0x00000004U
 #define EFI_RESERVED_MEMORY_TYPE 0U
 #define EFI_RUNTIME_SERVICES_DATA 6U
 #define EFI_CONVENTIONAL_MEMORY 7U
@@ -139,10 +133,6 @@ typedef EFI_STATUS(EFIAPI *EFI_CLOSE_EVENT)(EFI_EVENT Event);
 typedef EFI_STATUS(EFIAPI *EFI_REGISTER_PROTOCOL_NOTIFY)(EFI_GUID *Protocol,
                                                          EFI_EVENT Event,
                                                          VOID **Registration);
-typedef EFI_STATUS(EFIAPI *EFI_SET_VARIABLE)(CHAR16 *VariableName,
-                                             EFI_GUID *VendorGuid,
-                                             UINT32 Attributes,
-                                             UINTN DataSize, VOID *Data);
 
 struct EFI_BOOT_SERVICES {
   EFI_TABLE_HEADER Hdr;
@@ -192,19 +182,6 @@ struct EFI_BOOT_SERVICES {
   VOID *CreateEventEx;
 };
 
-struct EFI_RUNTIME_SERVICES {
-  EFI_TABLE_HEADER Hdr;
-  VOID *GetTime;
-  VOID *SetTime;
-  VOID *GetWakeupTime;
-  VOID *SetWakeupTime;
-  VOID *SetVirtualAddressMap;
-  VOID *ConvertPointer;
-  VOID *GetVariable;
-  VOID *GetNextVariableName;
-  EFI_SET_VARIABLE SetVariable;
-};
-
 struct EFI_SYSTEM_TABLE {
   EFI_TABLE_HEADER Hdr;
   CHAR16 *FirmwareVendor;
@@ -215,7 +192,7 @@ struct EFI_SYSTEM_TABLE {
   VOID *ConOut;
   EFI_HANDLE StandardErrorHandle;
   VOID *StdErr;
-  EFI_RUNTIME_SERVICES *RuntimeServices;
+  VOID *RuntimeServices;
   EFI_BOOT_SERVICES *BootServices;
   UINTN NumberOfTableEntries;
   EFI_CONFIGURATION_TABLE *ConfigurationTable;
@@ -277,10 +254,10 @@ typedef struct {
   UINTN MessageLength;
   UINT8 Data[1];
 } EFI_SMM_COMMUNICATE_HEADER;
+#pragma pack(pop)
 
 typedef struct {
   UINT32 Magic;
-  UINT32 Version;
   UINT32 Command;
   UINT32 PayloadSize;
   UINT64 MailboxPhysical;
@@ -288,39 +265,19 @@ typedef struct {
   UINT32 SwSmiValue;
   UINT8 Payload[1];
 } COMM_MESSAGE;
-#pragma pack(pop)
 
 typedef struct {
   UINT64 Magic;
   UINT32 HeaderSize;
   UINT32 TotalSize;
-  UINT32 Command;
-  UINT32 Status;
-  UINT32 SwSmiValue;
   UINT32 PayloadCapacity;
   UINT32 PayloadSize;
-  UINT32 Loaded;
-  UINT32 Generation;
-  UINT32 LastCommand;
-  UINT64 Sequence;
-  UINT64 Result;
   UINT64 PayloadHash;
   UINT64 PayloadOffset;
-  UINT64 PayloadBase;
   UINT32 DebugLogSize;
   UINT32 DebugLogCapacity;
   UINT8 DebugLog[MAILBOX_LOG_CAPACITY];
-  UINT8 Reserved[128];
 } MAILBOX;
-
-typedef struct {
-  UINT64 Magic;
-  UINT32 Size;
-  UINT32 SwSmiValue;
-  UINT64 MailboxPhysical;
-  UINT32 MailboxSize;
-  UINT32 PayloadCapacity;
-} MAILBOX_INFO;
 
 typedef struct {
   UINT32 Signature;
@@ -371,11 +328,6 @@ static EFI_GUID gCommunicationGuid = {
     0x2d8f,
     0x4f5e,
     {0x97, 0x4e, 0x5d, 0xe5, 0x54, 0x2e, 0x40, 0x31}};
-static EFI_GUID gMailboxInfoGuid = {
-    0x7b6a1a7d,
-    0x2f5d,
-    0x4fb8,
-    {0xb4, 0x22, 0x91, 0x0d, 0x8a, 0x27, 0x46, 0x51}};
 static EFI_GUID gEdkiiPiSmmCommunicationRegionTableGuid = {
     0x4e28ca50,
     0xd582,
@@ -748,7 +700,7 @@ static EFI_STATUS InstallWmiDoorbell(VOID) {
   UINT32 SmiPort;
   UINTN TableSize;
 
-  if (!ENABLE_WMI_DOORBELL || gDoorbellInstalled != 0) {
+  if (gDoorbellInstalled != 0) {
     return EFI_SUCCESS;
   }
   if (gSystemTable == 0 || gSystemTable->BootServices == 0 ||
@@ -803,65 +755,15 @@ VOID *memcpy(VOID *Destination, const VOID *Source, size_t Size) {
   return Destination;
 }
 
-static VOID InitializeMailboxContents(MAILBOX *Mailbox,
-                                      EFI_PHYSICAL_ADDRESS Physical,
-                                      UINT32 Size) {
+static VOID InitializeMailboxContents(MAILBOX *Mailbox, UINT32 Size) {
   ZeroMem(Mailbox, Size);
   Mailbox->Magic = MAILBOX_MAGIC;
   Mailbox->HeaderSize = MAILBOX_HEADER_SIZE;
   Mailbox->TotalSize = Size;
-  Mailbox->Status = STATUS_IDLE;
-  Mailbox->SwSmiValue = SW_SMI_VALUE;
   Mailbox->PayloadCapacity = MAILBOX_PAYLOAD_CAPACITY;
   Mailbox->PayloadOffset = MAILBOX_HEADER_SIZE;
-  Mailbox->PayloadBase = (UINT64)Physical + MAILBOX_HEADER_SIZE;
   Mailbox->DebugLogCapacity = MAILBOX_LOG_CAPACITY;
   Mailbox->DebugLogSize = 0;
-}
-
-static EFI_STATUS PublishMailboxVariable(EFI_PHYSICAL_ADDRESS Physical,
-                                         UINT32 Size) {
-  static CHAR16 VariableName[] = {
-      'S', 'M', 'M', '_', 'H', 'O', 'T',
-      'R', 'E', 'L', 'O', 'A', 'D', 0};
-  MAILBOX_INFO Info;
-  EFI_STATUS Status;
-
-  if (gSystemTable == 0 || gSystemTable->RuntimeServices == 0 ||
-      gSystemTable->RuntimeServices->SetVariable == 0) {
-    return EFI_INVALID_PARAMETER;
-  }
-  ZeroMem(&Info, sizeof(Info));
-  Info.Magic = MAILBOX_MAGIC;
-  Info.Size = (UINT32)sizeof(Info);
-  Info.SwSmiValue = SW_SMI_VALUE;
-  Info.MailboxPhysical = Physical;
-  Info.MailboxSize = Size;
-  Info.PayloadCapacity = MAILBOX_PAYLOAD_CAPACITY;
-  Status = gSystemTable->RuntimeServices->SetVariable(
-      VariableName, &gMailboxInfoGuid,
-      EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS,
-      sizeof(Info), &Info);
-  if (EFI_ERROR(Status)) {
-    SerialPrint("SetVariable(mailbox) failed ");
-    SerialHex64(Status);
-    SerialPrint("\n");
-    Status = gSystemTable->RuntimeServices->SetVariable(
-        VariableName, &gMailboxInfoGuid,
-        EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS |
-            EFI_VARIABLE_RUNTIME_ACCESS,
-        sizeof(Info), &Info);
-    if (EFI_ERROR(Status)) {
-      SerialPrint("SetVariable(mailbox NV) failed ");
-      SerialHex64(Status);
-      SerialPrint("\n");
-    } else {
-      SerialPrint("mailbox variable published NV fallback\n");
-    }
-  } else {
-    SerialPrint("mailbox variable published\n");
-  }
-  return Status;
 }
 
 static EFI_STATUS EnsureMailbox(VOID) {
@@ -888,8 +790,7 @@ static EFI_STATUS EnsureMailbox(VOID) {
 
   gMailboxPhysical = Address;
   gMailboxSize = (UINT32)(Pages << 12);
-  InitializeMailboxContents((MAILBOX *)(UINTN)Address, Address,
-                            gMailboxSize);
+  InitializeMailboxContents((MAILBOX *)(UINTN)Address, gMailboxSize);
   SerialPrint("mailbox base=0x");
   SerialHex64(Address);
   SerialPrint(" size=0x");
@@ -897,7 +798,6 @@ static EFI_STATUS EnsureMailbox(VOID) {
   SerialPrint(" sw=0x");
   SerialHex64(SW_SMI_VALUE);
   SerialPrint("\n");
-  PublishMailboxVariable(Address, gMailboxSize);
   return EFI_SUCCESS;
 }
 
@@ -1138,7 +1038,6 @@ static EFI_STATUS TrySendPayload(const char *Reason) {
   Header->MessageLength = COMM_HEADER_SIZE + CommPayloadSize;
   Message = (COMM_MESSAGE *)Header->Data;
   Message->Magic = COMM_MAGIC;
-  Message->Version = COMM_VERSION;
   Message->Command = CommCommand;
   Message->PayloadSize = (UINT32)PayloadSize;
   Message->MailboxPhysical = (UINT64)gMailboxPhysical;

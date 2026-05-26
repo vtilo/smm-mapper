@@ -68,3 +68,4 @@ serial_logs/
 *.VC.opendb
 Thumbs.db
 Desktop.ini
+*.txt

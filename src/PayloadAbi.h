@@ -18,24 +18,6 @@ typedef UINT64 EFI_STATUS;
 #define REASON_UNLOAD 2U
 #define REASON_DOORBELL 3U
 
-#define MAILBOX_MAGIC 0x58425645444D4D53ULL
-#define MAILBOX_HEADER_SIZE 0x1000U
-#define MAILBOX_PAYLOAD_CAPACITY (256U * 1024U)
-#define MAILBOX_TOTAL_SIZE \
-  (MAILBOX_HEADER_SIZE + MAILBOX_PAYLOAD_CAPACITY)
-#define SW_SMI_VALUE 0xD5U
-
-#define COMMAND_NONE 0U
-#define COMMAND_PING 1U
-#define COMMAND_STATUS 2U
-#define COMMAND_UNLOAD 3U
-#define COMMAND_RELOAD 4U
-
-#define STATUS_IDLE 0U
-#define STATUS_BUSY 1U
-#define STATUS_OK 2U
-#define STATUS_ERROR 0x80000000U
-
 typedef struct {
   UINT32 Data1;
   UINT16 Data2;
@@ -84,34 +66,5 @@ typedef struct {
 
 typedef EFI_STATUS(EFIAPI *PAYLOAD_ENTRY)(
     PAYLOAD_CONTEXT *Context);
-
-typedef struct {
-  UINT64 Magic;
-  UINT32 HeaderSize;
-  UINT32 TotalSize;
-  UINT32 Command;
-  UINT32 Status;
-  UINT32 SwSmiValue;
-  UINT32 PayloadCapacity;
-  UINT32 PayloadSize;
-  UINT32 Loaded;
-  UINT32 Generation;
-  UINT32 LastCommand;
-  UINT64 Sequence;
-  UINT64 Result;
-  UINT64 PayloadHash;
-  UINT64 PayloadOffset;
-  UINT64 PayloadBase;
-  UINT8 Reserved[128];
-} MAILBOX;
-
-typedef struct {
-  UINT64 Magic;
-  UINT32 Size;
-  UINT32 SwSmiValue;
-  UINT64 MailboxPhysical;
-  UINT32 MailboxSize;
-  UINT32 PayloadCapacity;
-} MAILBOX_INFO;
 
 #endif
