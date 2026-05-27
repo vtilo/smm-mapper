@@ -499,7 +499,7 @@ static EFI_STATUS EFIAPI HostRegisterSmiHandler(
     EFI_SMM_HANDLER_ENTRY_POINT2 Handler, const EFI_GUID *HandlerType,
     EFI_HANDLE *DispatchHandle) {
   EFI_STATUS Status;
-  if (gSmst == 0 || gSmst->SmiHandlerRegister == 0 || DispatchHandle == 0) {
+  if (gSmst->SmiHandlerRegister == 0 || DispatchHandle == 0) {
     return EFI_INVALID_PARAMETER;
   }
   Status = gSmst->SmiHandlerRegister(Handler, HandlerType, DispatchHandle);
@@ -517,8 +517,7 @@ static EFI_STATUS EFIAPI HostRegisterSmiHandler(
 
 static EFI_STATUS EFIAPI HostUnregisterSmiHandler(EFI_HANDLE DispatchHandle) {
   EFI_STATUS Status;
-  if (gSmst == 0 || gSmst->SmiHandlerUnRegister == 0 ||
-      DispatchHandle == 0) {
+  if (gSmst->SmiHandlerUnRegister == 0 || DispatchHandle == 0) {
     return EFI_INVALID_PARAMETER;
   }
   Status = gSmst->SmiHandlerUnRegister(DispatchHandle);
@@ -534,7 +533,7 @@ static EFI_STATUS EFIAPI HostUnregisterSmiHandler(EFI_HANDLE DispatchHandle) {
 
 static EFI_STATUS EFIAPI HostAllocatePool(UINTN Size, VOID **Buffer) {
   EFI_STATUS Status;
-  if (gSmst == 0 || gSmst->SmmAllocatePool == 0 || Buffer == 0) {
+  if (gSmst->SmmAllocatePool == 0 || Buffer == 0) {
     return EFI_INVALID_PARAMETER;
   }
   Status = gSmst->SmmAllocatePool(EfiRuntimeServicesData, Size, Buffer);
@@ -552,7 +551,7 @@ static EFI_STATUS EFIAPI HostAllocatePool(UINTN Size, VOID **Buffer) {
 
 static EFI_STATUS EFIAPI HostFreePool(VOID *Buffer) {
   EFI_STATUS Status;
-  if (gSmst == 0 || gSmst->SmmFreePool == 0 || Buffer == 0) {
+  if (gSmst->SmmFreePool == 0 || Buffer == 0) {
     return EFI_INVALID_PARAMETER;
   }
   Status = gSmst->SmmFreePool(Buffer);
@@ -580,11 +579,9 @@ static VOID PreparePayloadContext(UINT32 Reason) {
   gPayloadContext.AllocatePool = HostAllocatePool;
   gPayloadContext.FreePool = HostFreePool;
   gPayloadContext.PayloadBase = gPayloadImage;
-  if (gSmst != 0) {
-    gPayloadContext.RawSmiHandlerRegister = gSmst->SmiHandlerRegister;
-    gPayloadContext.RawSmiHandlerUnRegister = gSmst->SmiHandlerUnRegister;
-    gPayloadContext.SmmLocateProtocol = gSmst->SmmLocateProtocol;
-  }
+  gPayloadContext.RawSmiHandlerRegister = gSmst->SmiHandlerRegister;
+  gPayloadContext.RawSmiHandlerUnRegister = gSmst->SmiHandlerUnRegister;
+  gPayloadContext.SmmLocateProtocol = gSmst->SmmLocateProtocol;
 }
 
 VOID *memset(VOID *Destination, int Value, size_t Size) {
@@ -843,7 +840,7 @@ static EFI_STATUS LoadPe32Plus(UINT8 *File, UINTN FileSize,
 }
 
 static VOID CleanupTrackedResources(VOID) {
-  if (gSmst != 0 && gSmst->SmiHandlerUnRegister != 0) {
+  if (gSmst->SmiHandlerUnRegister != 0) {
     for (UINTN Index = 0; Index < MAX_TRACKED_HANDLERS; Index++) {
       if (gTrackedHandlers[Index] != 0) {
         gSmst->SmiHandlerUnRegister(gTrackedHandlers[Index]);
@@ -851,7 +848,7 @@ static VOID CleanupTrackedResources(VOID) {
       }
     }
   }
-  if (gSmst != 0 && gSmst->SmmFreePool != 0) {
+  if (gSmst->SmmFreePool != 0) {
     for (UINTN Index = 0; Index < MAX_TRACKED_POOLS; Index++) {
       if (gTrackedPools[Index] != 0) {
         gSmst->SmmFreePool(gTrackedPools[Index]);
@@ -1274,7 +1271,7 @@ static EFI_STATUS RegisterControlSwSmi(VOID) {
   EFI_SMM_SW_DISPATCH2_PROTOCOL *SwDispatch = 0;
   EFI_SMM_SW_REGISTER_CONTEXT SwContext;
 
-  if (gSmst == 0 || gSmst->SmmLocateProtocol == 0) {
+  if (gSmst->SmmLocateProtocol == 0) {
     return EFI_INVALID_PARAMETER;
   }
   Status = ((EFI_LOCATE_PROTOCOL)gSmst->SmmLocateProtocol)(
@@ -1320,9 +1317,12 @@ EFI_STATUS EFIAPI SmmHostEntry(EFI_HANDLE ImageHandle,
   gSystemTable = SystemTable;
   gImageHandle = ImageHandle;
 
-  if (!EFI_ERROR(RegisterSmmCommunication())) {
-    RegisterControlSwSmi();
+  Status = RegisterSmmCommunication();
+  if (EFI_ERROR(Status)) {
+    return EFI_SUCCESS;
   }
+  RegisterControlSwSmi();
+
   Status = TryLoadPayload("initial dispatch");
   if (EFI_ERROR(Status)) {
     SerialPrint("waiting for DXE bridge payload delivery\n");
