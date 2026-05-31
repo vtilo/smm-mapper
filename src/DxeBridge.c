@@ -357,9 +357,11 @@ static EFI_GUID gDoorbellWmiGuid = {
 static EFI_SYSTEM_TABLE *gSystemTable;
 static EFI_EVENT gSimpleFsEvent;
 static EFI_EVENT gSmmCommEvent;
+static EFI_EVENT gAcpiEvent;
 static EFI_EVENT gRetryTimerEvent;
 static VOID *gSimpleFsRegistration;
 static VOID *gSmmCommRegistration;
+static VOID *gAcpiRegistration;
 static UINTN gSent;
 static UINTN gRetryCount;
 static EFI_PHYSICAL_ADDRESS gMailboxPhysical;
@@ -1085,6 +1087,7 @@ static VOID EFIAPI BridgeNotify(EFI_EVENT Event, VOID *Context) {
       return;
     }
   }
+  InstallWmiDoorbell();
   TrySendPayload((const char *)Context);
 }
 
@@ -1166,6 +1169,11 @@ EFI_STATUS EFIAPI DxeBridgeEntry(EFI_HANDLE ImageHandle,
                    &gSimpleFsRegistration, "SimpleFS");
     RegisterNotify(&gEfiSmmCommunicationProtocolGuid, &gSmmCommEvent,
                    &gSmmCommRegistration, "SmmCommunication");
+  }
+  if (gDoorbellInstalled == 0) {
+    RegisterRetryTimer();
+    RegisterNotify(&gEfiAcpiTableProtocolGuid, &gAcpiEvent,
+                   &gAcpiRegistration, "AcpiTable");
   }
   return EFI_SUCCESS;
 }
