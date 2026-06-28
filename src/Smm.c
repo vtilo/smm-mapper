@@ -769,6 +769,10 @@ static EFI_STATUS LoadPe32Plus(UINT8 *File, UINTN FileSize,
   CopyMemLocal(gPayloadImage, File, SizeOfHeaders);
 
   Section = Optional + SizeOfOptionalHeader;
+  if ((UINTN)(Section - File) + (UINTN)NumberOfSections * 40 > FileSize) {
+    SerialPrint("payload section bounds rejected\n");
+    return EFI_LOAD_ERROR;
+  }
   for (UINTN Index = 0; Index < NumberOfSections; Index++) {
     UINT8 *Sh = Section + Index * 40;
     UINT32 VirtualSize = Read32(Sh + 8);
