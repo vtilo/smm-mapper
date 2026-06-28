@@ -1303,7 +1303,7 @@ static EFI_STATUS RegisterControlSwSmi(VOID) {
   return EFI_SUCCESS;
 }
 
-EFI_STATUS EFIAPI SmmHostEntry(EFI_HANDLE ImageHandle,
+EFI_STATUS EFIAPI SmmEntry(EFI_HANDLE ImageHandle,
                                EFI_SYSTEM_TABLE *SystemTable) {
   EFI_STATUS Status;
 

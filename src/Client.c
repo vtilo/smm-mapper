@@ -330,10 +330,10 @@ int wmain(int argc, wchar_t **argv) {
 
   fwprintf(stderr,
            L"Usage:\n"
-           L"  SmmClient.exe doorbell\n"
-           L"  SmmClient.exe status\n"
-           L"  SmmClient.exe ping\n"
-           L"  SmmClient.exe unload\n"
-           L"  SmmClient.exe reload C:\\path\\PAYLOAD.EFI\n");
+           L"  Client.exe doorbell\n"
+           L"  Client.exe status\n"
+           L"  Client.exe ping\n"
+           L"  Client.exe unload\n"
+           L"  Client.exe reload C:\\path\\PAYLOAD.EFI\n");
   return 1;
 }

@@ -1,5 +1,5 @@
-#ifndef PAYLOAD_ABI_H
-#define PAYLOAD_ABI_H
+#ifndef ABI_H
+#define ABI_H
 
 typedef unsigned char UINT8;
 typedef unsigned short UINT16;

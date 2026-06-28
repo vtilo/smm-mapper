@@ -1,4 +1,4 @@
-#include "PayloadAbi.h"
+#include "Abi.h"
 
 EFI_STATUS EFIAPI PayloadEntry(PAYLOAD_CONTEXT *Context) {
   if (Context == 0 || Context->SerialPrint == 0 ||

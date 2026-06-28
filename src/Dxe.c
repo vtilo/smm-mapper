@@ -1151,7 +1151,7 @@ static VOID RegisterNotify(EFI_GUID *Guid, EFI_EVENT *Event, VOID **Registration
   SerialPrint("\n");
 }
 
-EFI_STATUS EFIAPI DxeBridgeEntry(EFI_HANDLE ImageHandle,
+EFI_STATUS EFIAPI DxeEntry(EFI_HANDLE ImageHandle,
                                         EFI_SYSTEM_TABLE *SystemTable) {
   (void)ImageHandle;
   gSystemTable = SystemTable;

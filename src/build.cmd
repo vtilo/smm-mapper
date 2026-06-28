@@ -32,19 +32,19 @@ mkdir "%OUT%" 2>nul
 set "EFI_CL=/nologo /c /O1 /Oi /GS- /GR- /EHs-c- /Zl /W4"
 set "EFI_LD=/nologo /dll /nodefaultlib /machine:x64 /subsystem:EFI_BOOT_SERVICE_DRIVER /fixed:no /dynamicbase:no /nxcompat:no"
 
-"%CL_EXE%" %EFI_CL% /Fo:%OUT%\DxeBridge.obj src\DxeBridge.c || exit /b 1
-link %EFI_LD% /entry:DxeBridgeEntry /out:%OUT%\DxeBridge.efi %OUT%\DxeBridge.obj || exit /b 1
+"%CL_EXE%" %EFI_CL% /Fo:%OUT%\Dxe.obj src\Dxe.c || exit /b 1
+link %EFI_LD% /entry:DxeEntry /out:%OUT%\Dxe.efi %OUT%\Dxe.obj || exit /b 1
 
-"%CL_EXE%" %EFI_CL% /Fo:%OUT%\SmmHost.obj src\SmmHost.c || exit /b 1
-link %EFI_LD% /entry:SmmHostEntry /out:%OUT%\SmmHost.efi %OUT%\SmmHost.obj || exit /b 1
+"%CL_EXE%" %EFI_CL% /Fo:%OUT%\Smm.obj src\Smm.c || exit /b 1
+link %EFI_LD% /entry:SmmEntry /out:%OUT%\Smm.efi %OUT%\Smm.obj || exit /b 1
 
 "%CL_EXE%" %EFI_CL% /Fo:%OUT%\Payload.obj src\Payload.c || exit /b 1
 link %EFI_LD% /entry:PayloadEntry /out:%OUT%\Payload.efi %OUT%\Payload.obj || exit /b 1
 
-"%CL_EXE%" /nologo /W4 /O2 /DUNICODE /D_UNICODE /Fo:%OUT%\SmmClient.obj /Fe:%OUT%\SmmClient.exe src\SmmClient.c Advapi32.lib || exit /b 1
+"%CL_EXE%" /nologo /W4 /O2 /DUNICODE /D_UNICODE /Fo:%OUT%\Client.obj /Fe:%OUT%\Client.exe src\Client.c Advapi32.lib || exit /b 1
 
 echo Built:
-echo   %OUT%\DxeBridge.efi
-echo   %OUT%\SmmHost.efi
+echo   %OUT%\Dxe.efi
+echo   %OUT%\Smm.efi
 echo   %OUT%\Payload.efi
-echo   %OUT%\SmmClient.exe
+echo   %OUT%\Client.exe
