@@ -217,7 +217,7 @@ static void InitRequest(WMI_REQUEST *Request, uint32_t Command) {
   Request->Command = Command;
 }
 
-static int SendSimpleCommand(uint32_t Command) {
+static int SendCommand(uint32_t Command) {
   WMI_CLIENT Client;
   WMI_REQUEST *Request;
   WMI_RESPONSE Response;
@@ -313,16 +313,16 @@ Done:
 
 int wmain(int argc, wchar_t **argv) {
   if (argc == 2 && _wcsicmp(argv[1], L"doorbell") == 0) {
-    return SendSimpleCommand(WMI_DOORBELL);
+    return SendCommand(WMI_DOORBELL);
   }
   if (argc == 2 && _wcsicmp(argv[1], L"status") == 0) {
-    return SendSimpleCommand(WMI_STATUS);
+    return SendCommand(WMI_STATUS);
   }
   if (argc == 2 && _wcsicmp(argv[1], L"ping") == 0) {
-    return SendSimpleCommand(WMI_PING);
+    return SendCommand(WMI_PING);
   }
   if (argc == 2 && _wcsicmp(argv[1], L"unload") == 0) {
-    return SendSimpleCommand(WMI_UNLOAD);
+    return SendCommand(WMI_UNLOAD);
   }
   if (argc == 3 && _wcsicmp(argv[1], L"reload") == 0) {
     return ReloadPayload(argv[2]);

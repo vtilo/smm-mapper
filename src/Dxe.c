@@ -768,7 +768,7 @@ static VOID InitializeMailboxContents(MAILBOX *Mailbox, UINT32 Size) {
   Mailbox->DebugLogSize = 0;
 }
 
-static EFI_STATUS EnsureMailbox(VOID) {
+static EFI_STATUS AllocateMailbox(VOID) {
   EFI_STATUS Status;
   EFI_PHYSICAL_ADDRESS Address = 0xFFFFFFFFULL;
   UINTN Pages = (MAILBOX_TOTAL_SIZE + 0xFFFU) >> 12;
@@ -970,7 +970,7 @@ static VOID RestoreSmmCommRegionType(VOID *CommBuffer, UINT32 OriginalType) {
   }
 }
 
-static EFI_STATUS TrySendPayload(const char *Reason) {
+static EFI_STATUS SendPayload(const char *Reason) {
   EFI_BOOT_SERVICES *Bs = gSystemTable->BootServices;
   EFI_SMM_COMMUNICATION_PROTOCOL *SmmComm = 0;
   EFI_SMM_COMMUNICATE_HEADER *Header;
@@ -1009,7 +1009,7 @@ static EFI_STATUS TrySendPayload(const char *Reason) {
     return Status;
   }
 
-  EnsureMailbox();
+  AllocateMailbox();
 
   CommSize = 24 + COMM_HEADER_SIZE + PayloadSize;
   CommBuffer = FindSmmCommRegion(CommSize, &OriginalRegionType);
@@ -1079,7 +1079,7 @@ static EFI_STATUS TrySendPayload(const char *Reason) {
   return Status;
 }
 
-static VOID EFIAPI BridgeNotify(EFI_EVENT Event, VOID *Context) {
+static VOID EFIAPI RetrySetup(EFI_EVENT Event, VOID *Context) {
   (void)Event;
   if (Context == (VOID *)"timer") {
     gRetryCount++;
@@ -1088,7 +1088,7 @@ static VOID EFIAPI BridgeNotify(EFI_EVENT Event, VOID *Context) {
     }
   }
   InstallWmiDoorbell();
-  TrySendPayload((const char *)Context);
+  SendPayload((const char *)Context);
 }
 
 static VOID RegisterRetryTimer(VOID) {
@@ -1099,7 +1099,7 @@ static VOID RegisterRetryTimer(VOID) {
     return;
   }
   Status = Bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
-                           BridgeNotify, (VOID *)"timer",
+                           RetrySetup, (VOID *)"timer",
                            &gRetryTimerEvent);
   if (EFI_ERROR(Status)) {
     SerialPrint("CreateEvent(timer) failed ");
@@ -1128,7 +1128,7 @@ static VOID RegisterNotify(EFI_GUID *Guid, EFI_EVENT *Event, VOID **Registration
   if (*Event != 0) {
     return;
   }
-  Status = Bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, BridgeNotify,
+  Status = Bs->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, RetrySetup,
                            (VOID *)Name, Event);
   if (EFI_ERROR(Status)) {
     SerialPrint("CreateEvent failed ");
@@ -1161,9 +1161,9 @@ EFI_STATUS EFIAPI DxeEntry(EFI_HANDLE ImageHandle,
     return EFI_INVALID_PARAMETER;
   }
 
-  EnsureMailbox();
+  AllocateMailbox();
   InstallWmiDoorbell();
-  if (EFI_ERROR(TrySendPayload("entry"))) {
+  if (EFI_ERROR(SendPayload("entry"))) {
     RegisterRetryTimer();
     RegisterNotify(&gEfiSimpleFileSystemProtocolGuid, &gSimpleFsEvent,
                    &gSimpleFsRegistration, "SimpleFS");
