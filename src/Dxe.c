@@ -35,11 +35,11 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 #define TPL_CALLBACK 8U
 #define COM1_PORT 0x3F8
 #define PAYLOAD_FILE_LIMIT (256U * 1024U)
-#define COMM_MAGIC 0x56444D53U
+#define COMM_MAGIC 0x7CA3144CU
 #define COMM_LOAD_INLINE 1U
 #define COMM_LOAD_MAILBOX 2U
 #define COMM_HEADER_SIZE 32U
-#define MAILBOX_MAGIC 0x58425645444D4D53ULL
+#define MAILBOX_MAGIC 0x18B045152AAC6C11ULL
 #define MAILBOX_HEADER_SIZE 0x1000U
 #define MAILBOX_PAYLOAD_CAPACITY (256U * 1024U)
 #define MAILBOX_LOG_CAPACITY 3072U
@@ -413,7 +413,7 @@ static VOID ZeroMem(VOID *Buffer, UINTN Size) {
   }
 }
 
-static VOID CopyMemLocal(VOID *Destination, const VOID *Source, UINTN Size) {
+static VOID CopyMem(VOID *Destination, const VOID *Source, UINTN Size) {
   UINT8 *Dst = (UINT8 *)Destination;
   const UINT8 *Src = (const UINT8 *)Source;
   while (Size--) {
@@ -445,7 +445,7 @@ static UINT8 AcpiChecksum(const UINT8 *Buffer, UINTN Size) {
 }
 
 static UINT8 *EmitBytes(UINT8 *Out, const VOID *Data, UINTN Size) {
-  CopyMemLocal(Out, Data, Size);
+  CopyMem(Out, Data, Size);
   return Out + Size;
 }
 
@@ -581,8 +581,8 @@ static UINTN BuildDoorbellSsdt(UINT8 *Buffer, UINTN Capacity,
   ZeroMem(Buffer, Capacity);
   Header->Signature = Signature32('S', 'S', 'D', 'T');
   Header->Revision = 2;
-  CopyMemLocal(Header->OemId, "SMMLDR", 6);
-  CopyMemLocal(Header->OemTableId, "DOORBELL", 8);
+  CopyMem(Header->OemId, "SMMLDR", 6);
+  CopyMem(Header->OemTableId, "DOORBELL", 8);
   Header->OemRevision = 1;
   Header->CreatorId = Signature32('S', 'M', 'A', 'P');
   Header->CreatorRevision = 1;
@@ -608,7 +608,7 @@ static UINTN BuildDoorbellSsdt(UINT8 *Buffer, UINTN Capacity,
   Out = EmitString(Out, "SmmMapper");
 
   ZeroMem(Wdg, sizeof(Wdg));
-  CopyMemLocal(Wdg, &gDoorbellWmiGuid, sizeof(gDoorbellWmiGuid));
+  CopyMem(Wdg, &gDoorbellWmiGuid, sizeof(gDoorbellWmiGuid));
   Wdg[16] = 'B';
   Wdg[17] = 'D';
   Wdg[18] = 1;
@@ -753,7 +753,7 @@ VOID *memset(VOID *Destination, int Value, size_t Size) {
 }
 
 VOID *memcpy(VOID *Destination, const VOID *Source, size_t Size) {
-  CopyMemLocal(Destination, Source, Size);
+  CopyMem(Destination, Source, Size);
   return Destination;
 }
 
@@ -876,7 +876,7 @@ static EFI_STATUS StagePayloadInMailbox(UINTN PayloadSize) {
   }
 
   PayloadBase = (UINT8 *)Mailbox + Mailbox->PayloadOffset;
-  CopyMemLocal(PayloadBase, gPayloadFile, PayloadSize);
+  CopyMem(PayloadBase, gPayloadFile, PayloadSize);
   Mailbox->PayloadSize = (UINT32)PayloadSize;
   Mailbox->PayloadHash = Hash64(gPayloadFile, PayloadSize);
   return EFI_SUCCESS;
@@ -1046,7 +1046,7 @@ static EFI_STATUS TrySendPayload(const char *Reason) {
   Message->MailboxSize = gMailboxSize;
   Message->SwSmiValue = SW_SMI_VALUE;
   if (CommPayloadSize != 0) {
-    CopyMemLocal(Message->Payload, gPayloadFile, PayloadSize);
+    CopyMem(Message->Payload, gPayloadFile, PayloadSize);
   }
 
   SerialPrint("communicating payload bytes=0x");

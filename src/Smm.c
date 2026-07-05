@@ -39,31 +39,31 @@ typedef UINTN EFI_TPL;
 #define COM1_PORT 0x3F8
 #define PAYLOAD_FILE_LIMIT (256U * 1024U)
 #define PAYLOAD_IMAGE_LIMIT (768U * 1024U)
-#define COMM_MAGIC 0x56444D53U
+#define COMM_MAGIC 0x7CA3144CU
 #define COMM_LOAD_INLINE 1U
 #define COMM_LOAD_MAILBOX 2U
 #define COMM_HEADER_SIZE 32U
 #define REASON_LOAD 1U
 #define REASON_UNLOAD 2U
 #define REASON_DOORBELL 3U
-#define MAILBOX_MAGIC 0x58425645444D4D53ULL
+#define MAILBOX_MAGIC 0x18B045152AAC6C11ULL
 #define MAILBOX_HEADER_SIZE 0x1000U
 #define MAILBOX_PAYLOAD_CAPACITY (256U * 1024U)
 #define MAILBOX_LOG_CAPACITY 3072U
 #define MAILBOX_TOTAL_SIZE \
   (MAILBOX_HEADER_SIZE + MAILBOX_PAYLOAD_CAPACITY)
 #define SW_SMI_VALUE 0xD5U
-#define WMI_REQUEST_MAGIC 0x00514552574D4D53ULL
-#define WMI_RESPONSE_MAGIC 0x00534552574D4D53ULL
+#define WMI_REQUEST_MAGIC 0x205491981D54CE66ULL
+#define WMI_RESPONSE_MAGIC 0xA59BF0D6049B9C38ULL
 #define WMI_REQUEST_SIZE 4096U
 #define WMI_RESPONSE_OFFSET 0xD00U
 #define WMI_RESPONSE_SIZE 512U
-#define WMI_COMMAND_DOORBELL 1U
-#define WMI_COMMAND_PING 2U
-#define WMI_COMMAND_STATUS 3U
-#define WMI_COMMAND_UNLOAD 4U
-#define WMI_COMMAND_STAGE_CHUNK 5U
-#define WMI_COMMAND_RELOAD 6U
+#define WMI_DOORBELL 1U
+#define WMI_PING 2U
+#define WMI_STATUS 3U
+#define WMI_UNLOAD 4U
+#define WMI_STAGE_CHUNK 5U
+#define WMI_RELOAD 6U
 #define MAX_TRACKED_HANDLERS 16U
 #define MAX_TRACKED_POOLS 16U
 #define EfiRuntimeServicesData 6U
@@ -477,7 +477,7 @@ static VOID ZeroMem(VOID *Buffer, UINTN Size) {
   }
 }
 
-static VOID CopyMemLocal(VOID *Destination, const VOID *Source, UINTN Size) {
+static VOID CopyMem(VOID *Destination, const VOID *Source, UINTN Size) {
   UINT8 *Dst = (UINT8 *)Destination;
   const UINT8 *Src = (const UINT8 *)Source;
   while (Size--) {
@@ -766,7 +766,7 @@ static EFI_STATUS LoadPe32Plus(UINT8 *File, UINTN FileSize,
   }
 
   ZeroMem(gPayloadImage, PAYLOAD_IMAGE_LIMIT);
-  CopyMemLocal(gPayloadImage, File, SizeOfHeaders);
+  CopyMem(gPayloadImage, File, SizeOfHeaders);
 
   Section = Optional + SizeOfOptionalHeader;
   for (UINTN Index = 0; Index < NumberOfSections; Index++) {
@@ -787,7 +787,7 @@ static EFI_STATUS LoadPe32Plus(UINT8 *File, UINTN FileSize,
       SerialPrint("payload section bounds rejected\n");
       return EFI_LOAD_ERROR;
     }
-    CopyMemLocal(gPayloadImage + VirtualAddress, File + PointerToRawData,
+    CopyMem(gPayloadImage + VirtualAddress, File + PointerToRawData,
                  CopySize);
   }
 
@@ -909,7 +909,7 @@ static EFI_STATUS InstallPayloadBytes(const UINT8 *Payload, UINTN PayloadSize,
 
   if (Payload != gPayloadFile) {
     ZeroMem(gPayloadFile, PAYLOAD_FILE_LIMIT);
-    CopyMemLocal(gPayloadFile, Payload, PayloadSize);
+    CopyMem(gPayloadFile, Payload, PayloadSize);
   }
   Status = LoadPe32Plus(gPayloadFile, PayloadSize, &PayloadEntry);
   if (EFI_ERROR(Status) || PayloadEntry == 0) {
@@ -1083,7 +1083,7 @@ static VOID WriteWmiResponse(UINT32 Command, EFI_STATUS Status) {
     }
     Response->DebugLogSize = LogSize;
     if (LogSize != 0) {
-      CopyMemLocal(Response->DebugLog, gMailbox->DebugLog, LogSize);
+      CopyMem(Response->DebugLog, gMailbox->DebugLog, LogSize);
     }
   }
 }
@@ -1108,21 +1108,21 @@ static EFI_STATUS ProcessWmiRequest(VOID) {
   DataSize = (UINTN)Request->DataSize;
   MailboxLogReset();
 
-  if (Command == WMI_COMMAND_DOORBELL) {
+  if (Command == WMI_DOORBELL) {
     Status = DispatchDoorbellToPayload();
-  } else if (Command == WMI_COMMAND_PING || Command == WMI_COMMAND_STATUS) {
+  } else if (Command == WMI_PING || Command == WMI_STATUS) {
     Status = EFI_SUCCESS;
-  } else if (Command == WMI_COMMAND_UNLOAD) {
+  } else if (Command == WMI_UNLOAD) {
     Status = UnloadPayload("WMI unload");
-  } else if (Command == WMI_COMMAND_STAGE_CHUNK) {
+  } else if (Command == WMI_STAGE_CHUNK) {
     if (DataSize > WMI_REQUEST_SIZE - WMI_REQUEST_HEADER_SIZE ||
         Request->Offset + DataSize > PAYLOAD_FILE_LIMIT) {
       Status = EFI_INVALID_PARAMETER;
     } else {
-      CopyMemLocal(gPayloadFile + Request->Offset, Request->Data, DataSize);
+      CopyMem(gPayloadFile + Request->Offset, Request->Data, DataSize);
       Status = EFI_SUCCESS;
     }
-  } else if (Command == WMI_COMMAND_RELOAD) {
+  } else if (Command == WMI_RELOAD) {
     PayloadSize = (UINTN)Request->PayloadSize;
     if (PayloadSize == 0 || PayloadSize >= PAYLOAD_FILE_LIMIT) {
       Status = EFI_INVALID_PARAMETER;
